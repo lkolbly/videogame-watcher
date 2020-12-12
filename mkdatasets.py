@@ -1,6 +1,9 @@
 import os
 import shutil
 import sys
+from PIL import Image
+
+SIZE = 180
 
 def mkds(name, sets, in_path, out_path):
     """
@@ -11,9 +14,10 @@ def mkds(name, sets, in_path, out_path):
         os.makedirs(f"{out_path}/{name}/{new_class}")
         for s in members:
             for fname in os.listdir(f"{in_path}/{s}"):
-                shutil.copy(f"{in_path}/{s}/{fname}", f"{out_path}/{name}/{new_class}/{fname}")
+                im = Image.open(f"{in_path}/{s}/{fname}")
+                im = im.resize((SIZE, SIZE))
+                im.save(f"{out_path}/{name}/{new_class}/{fname}")
 
-#if __name__ == "__main__":
 def main():
     if len(sys.argv) != 3:
         print(f"Expected usage: {sys.argv[0]} <Input path> <Datasets path>")
