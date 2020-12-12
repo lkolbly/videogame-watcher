@@ -1,9 +1,10 @@
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import numpy as np
 import os
 import PIL
 import tensorflow as tf
 import time
+import sys
 
 from tensorflow import keras
 from tensorflow.keras import layers
@@ -18,20 +19,20 @@ def mkmodel(data_dir, save_path):
 
     # Load the dataset
     train_ds = tf.keras.preprocessing.image_dataset_from_directory(
-    data_dir,
-    validation_split=0.2,
-    subset="training",
-    seed=123,
-    image_size=(img_height, img_width),
-    batch_size=batch_size)
+        data_dir,
+        validation_split=0.2,
+        subset="training",
+        seed=123,
+        image_size=(img_height, img_width),
+        batch_size=batch_size)
 
     val_ds = tf.keras.preprocessing.image_dataset_from_directory(
-    data_dir,
-    validation_split=0.2,
-    subset="validation",
-    seed=123,
-    image_size=(img_height, img_width),
-    batch_size=batch_size)
+        data_dir,
+        validation_split=0.2,
+        subset="validation",
+        seed=123,
+        image_size=(img_height, img_width),
+        batch_size=batch_size)
 
     class_names = train_ds.class_names
     print(class_names)
@@ -98,21 +99,41 @@ def mkmodel(data_dir, save_path):
     plt.title('Training and Validation Loss')
     plt.show()"""
 
-    def runmodel(arr):
+    """def runmodel(arr):
         predictions = model.predict(tf.expand_dims(arr, 0))
         score = tf.nn.softmax(predictions[0])
         #print("Frame: {} FPS: {:.02} Class: {} Confidence: {}%".format(frameno, 1.0 / max(0.000001, time.time() - start), class_names[np.argmax(score)], 100 * np.max(score)))
-        return (class_names[np.argmax(score)], 100 * np.max(score))
+        return (class_names[np.argmax(score)], 100 * np.max(score))"""
 
     model.save(save_path)
 
-    return runmodel
+    with open(f"{save_path}.json", "w") as f:
+        f.write(json.dumps(class_names))
+
+    #return runmodel
     #return (class_names, model)
 
-ident_model = mkmodel("datasets/game_ident", "models/ident.h5")
-warzone_model = mkmodel("datasets/warzone", "models/warzone.h5")
-warships_model = mkmodel("datasets/warships", "models/warships.h5")
-overwatch_model = mkmodel("datasets/overwatch", "models/overwatch.h5")
+#ident_model = mkmodel("datasets/game_ident", "models/ident.h5")
+#warzone_model = mkmodel("datasets/warzone", "models/warzone.h5")
+#warships_model = mkmodel("datasets/warships", "models/warships.h5")
+#overwatch_model = mkmodel("datasets/overwatch", "models/overwatch.h5")
+
+def main():
+    if len(sys.argv) != 3:
+        print(f"Expected usage: {sys.argv[0]} <Path to datasets> <Output model path>")
+        print("You can generate the datasets directory using the mkdatasets.py script")
+        return
+
+    dataset_path = sys.argv[1]
+    model_path = sys.argv[2]
+
+    mkmodel(f"{dataset_path}/game_ident", f"{model_path}/ident.h5")
+    mkmodel(f"{dataset_path}/warzone", f"{model_path}/warzone.h5")
+    mkmodel(f"{dataset_path}/warships", f"{model_path}/warships.h5")
+    mkmodel(f"{dataset_path}/overwatch", f"{model_path}/overwatch.h5")
+
+if __name__ == "__main__":
+    main()
 
 #ident_model.save("models/ident.h5")
 #warzone_model.save("models/warzone.h5")
