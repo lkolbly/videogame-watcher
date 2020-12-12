@@ -12,9 +12,12 @@ from moviepy.editor import *
 import shutil
 import tempfile
 
-FRAMESKIP = 60 * 10 # 10s
+#FRAMESKIP = 60 * 10 # 10s
 
-def load_model(path, class_names):
+def load_model(path):
+    class_names = json.loads(open(f"{path}.json").read())
+
+    import silence_tensorflow.auto
     import tensorflow as tf
     model = tf.keras.models.load_model(path)
     def runmodel(arr):
@@ -23,8 +26,15 @@ def load_model(path, class_names):
         return (class_names[np.argmax(score)], 100 * np.max(score))
     return runmodel
 
+class Args:
+    def __init__(self):
+        self.models_path = None
+        self.retrain_path = None
+        self.known_game_path = None
+        self.skip_frames = None
+
 class MenuGameTagger:
-    def __init__(self, name):
+    def __init__(self, name, video, args):
         """import tensorflow as tf
 
         def load_model(path, class_names):
@@ -35,17 +45,21 @@ class MenuGameTagger:
                 return (class_names[np.argmax(score)], 100 * np.max(score))
             return runmodel"""
 
-        self.model = load_model(f"{name}.h5", ["blank", "game", "menu"])
+        self.model = load_model(f"{args.models_path}/{name}.h5")
+        self.video = video
+        self.retrain_path = args.retrain_path
         self.last_state = None
         self.segments = []
         self.name = name
-        os.makedirs(f"{name}-out", exist_ok=True)
+        #os.makedirs(f"{name}-out", exist_ok=True)
+        self.retrain = {}
 
-    def process(self, frameno, frame):
+    def process(self, frameno, im):
         """
         frame is the converted/preprocessed 180x180x3 numpy array
         Returns True if the frame should be saved for retraining
         """
+        frame = np.array(im)
         (pred, score) = self.model(frame)
         should_retrain = score < 80
         if pred == "blank":
@@ -55,9 +69,28 @@ class MenuGameTagger:
             self.last_state = pred
             self.segments.append((frameno, pred))
 
+        if self.retrain_path is not None and score < 80:
+            h = hashlib.sha224(im.resize((256, 256)).tobytes()).hexdigest()
+            r,g,b = im.split()
+            im_swapped = PIL.Image.merge("RGB", (b, g, r))
+
+            fd,tmpfname = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            im_swapped.save(tmpfname)
+            self.retrain[h] = tmpfname
+
         return should_retrain
 
-    def finish(self, video):
+    def discard(self):
+        for h,fname in self.retrain.items():
+            os.remove(fname)
+
+    def finish(self):
+        for h,fname in self.retrain.items():
+            shutil.move(fname, f"retrain/{h}.png")
+
+        return
+
         fname_base = video.split("/")[-1].split(".")[0]
         with open(f"{self.name}-out/{fname_base}.json", "w") as f:
             f.write(json.dumps(self.segments))
@@ -78,11 +111,11 @@ class MenuGameTagger:
             pass
         pass
 
-def process_video(video, use_bar=False):
+def process_video(video, args, use_bar=False):
     if not video.endswith(".flv"):
         return
 
-    ident_model = load_model("ident.h5", ["blank", "obduction", "overwatch", "warships", "warzone"])
+    ident_model = load_model(f"{args.models_path}/ident.h5")
     #warzone_model = load_model("warzone.h5", ["game", "menu"])
 
     #find_unident_frames(ident_model, video, "warzone", use_bar)
@@ -97,7 +130,7 @@ def process_video(video, use_bar=False):
     #last_game = None
     taggers = {}
     for game in ["warzone", "overwatch", "warships"]:
-        taggers[game] = (MenuGameTagger(game), {})
+        taggers[game] = MenuGameTagger(game, video, args)
     games = collections.Counter()
     print("Processing {}...".format(video))
     #with tqdm() as bar:
@@ -109,7 +142,7 @@ def process_video(video, use_bar=False):
         frameno += 1
         start = time.time()
         ret, frame = cap.read()
-        if frameno % FRAMESKIP != 0:
+        if frameno % args.skip_frames != 0:
             # Only pull every 10s
             continue
         if frame is None:
@@ -122,7 +155,7 @@ def process_video(video, use_bar=False):
         #print("Frame: {} FPS: {:.02} Game: {} Class: {} Confidence: {}%".format(frameno, 1.0 / max(0.000001, time.time() - start), pred_game, pred, score))
         #bar.update(FRAMESKIP)
         if use_bar:
-            bar.update(FRAMESKIP)
+            bar.update(args.skip_frames)
 
         if pred_score < 80:# or score < 80 or pred_game == "obduction":
             #h = hashlib.sha224(im_orig.resize((256, 256)).tobytes()).hexdigest()
@@ -138,21 +171,15 @@ def process_video(video, use_bar=False):
         if pred != last_game:
             last_game = pred
             segments.append((frameno, pred))"""
-        h = hashlib.sha224(im_orig.resize((256, 256)).tobytes()).hexdigest()
+        #h = hashlib.sha224(im_orig.resize((256, 256)).tobytes()).hexdigest()
         #print(f"Retraining {h}")
-        r,g,b = im_orig.split()
-        im_swapped = PIL.Image.merge("RGB", (b, g, r))
+        #r,g,b = im_orig.split()
+        #im_swapped = PIL.Image.merge("RGB", (b, g, r))
         #im_swapped.save(f"retrain/{h}.png")
         #possible_retrain.append((h, im_swapped))
         #possible_retrain[h] = im_swapped
-        for (tagger, retrain) in taggers.values():
-            if tagger.process(frameno, arr):
-                #if len(retrain) < 50:
-                fd,tmpfname = tempfile.mkstemp(suffix=".png")
-                os.close(fd)
-                #retrain[h] = im_swapped
-                im_swapped.save(tmpfname)
-                retrain[h] = tmpfname
+        for tagger in taggers.values():
+            tagger.process(frameno, im)
         """if score < 80:
             h = hashlib.sha224(im_orig.resize((256, 256)).tobytes()).hexdigest()
             print(f"Retraining {h}")
@@ -172,28 +199,34 @@ def process_video(video, use_bar=False):
     cap.release()
 
     fname_base = video.split("/")[-1].split(".")[0]
-    with open(f"ident-out/{fname_base}.json", "w") as f:
-        f.write(json.dumps(games))
+    #with open(f"ident-out/{fname_base}.json", "w") as f:
+    #    f.write(json.dumps(games))
 
     print("Game counts for {}: {}".format(video, games))
     if len(games.most_common()) == 0:
+        for tagger in taggers:
+            tagger.discard()
         return
 
     game = games.most_common(1)[0][0]
-    if game not in taggers:
-        return
+    #if game not in taggers:
+    #    return
 
-    taggers[game][0].finish(video)
-    for h,im in taggers[game][1].items():
-        #im.save(f"retrain/{h}.png")
-        shutil.move(im, f"retrain/{h}.png")
+    #taggers[game][0].finish(video)
+    #for h,im in taggers[game][1].items():
+    #    #im.save(f"retrain/{h}.png")
+    #    shutil.move(im, f"retrain/{h}.png")
 
     for gname in taggers.keys():
         if gname != game:
-            for h,im in taggers[gname][1].items():
-                os.remove(im)
+            taggers[gname].discard()
+        else:
+            taggers[gname].finish()
+            #for h,im in taggers[gname][1].items():
+            #    os.remove(im)
 
-    find_unident_frames(ident_model, video, game, use_bar)
+    if args.known_game_path is not None:
+        find_unident_frames(ident_model, video, game, args, use_bar)
 
     #for h,im in force_retrain.items():
     #    im.save(f"retrain/{h}.png")
@@ -207,7 +240,7 @@ def process_video(video, use_bar=False):
 
     #return games.most_common(1)[0][0]
 
-def find_unident_frames(ident_model, video, classification, use_bar=False):
+def find_unident_frames(ident_model, video, classification, args, use_bar=False):
     os.makedirs(f"retrain-{classification}", exist_ok=True)
     #ident_model = load_model("ident.h5", ["blank", "obduction", "overwatch", "warships", "warzone"])
     #warzone_model = load_model("warzone.h5", ["game", "menu"])
@@ -232,7 +265,7 @@ def find_unident_frames(ident_model, video, classification, use_bar=False):
         frameno += 1
         start = time.time()
         ret, frame = cap.read()
-        if frameno % FRAMESKIP != 0:
+        if frameno % args.skip_frames != 0:
             # Only pull every 10s
             continue
         if frame is None:
@@ -243,7 +276,7 @@ def find_unident_frames(ident_model, video, classification, use_bar=False):
         (pred_game, pred_score) = ident_model(arr)
 
         if use_bar:
-            bar.update(FRAMESKIP)
+            bar.update(args.skip_frames)
 
         h = hashlib.sha224(im_orig.resize((256, 256)).tobytes()).hexdigest()
         r,g,b = im_orig.split()
@@ -251,7 +284,7 @@ def find_unident_frames(ident_model, video, classification, use_bar=False):
 
         #if (pred_score < 80 and pred_game != "blank") or pred_game not in [classification, "blank"]:
         if (pred_score < 80 or pred_game != classification) and pred_game != "blank":
-            im_swapped.save(f"retrain-{classification}/{h}.png")
+            im_swapped.save(f"{args.known_game_path}/{classification}/{h}.png")
 
     cap.release()
 
@@ -335,19 +368,37 @@ if __name__ == "__main__":
       - Optionally move into labelled directory
     - Split a video into matches
     - Generate moviepy script to access matches from source (and output low-bitrate copy for editing)
-    - Find "retraining" frames for each model
+    - Find uncertain frames for each model
+    - Find incorrectly classified frames for videos of known content
     """
 
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", help="Path to the models directory", required=True)
+
+    parser.add_argument("--no-bar", help="Disable printing the progress bar", action='store_true')
+
+    # Arguments for finding files
     parser.add_argument("--file", help="Path to a single video file to process")
+
+    # Arguments for defining how to process found files
+    parser.add_argument("--skip-frames", default="600", help="Only process every Nth frame")
     parser.add_argument("--identified-directory", help="If a file is identified, move it to the named directory")
+    parser.add_argument("--retrain-directory", help="If specified, add uncertain frames to this directory")
+    parser.add_argument("--known-game-directory", help="If specified, videos are re-processed using the known game identity to find frames which the ident model mis-classified")
 
-    args = parser.parse_args()
+    cmdline = parser.parse_args()
 
-    print(args.models)
+    #print(cmdline.models)
+
+    args = Args()
+    args.models_path = cmdline.models
+    args.retrain_path = cmdline.retrain_directory
+    args.known_game_path = cmdline.known_game_directory
+    args.skip_frames = int(cmdline.skip_frames)
+
+    process_video(cmdline.file, args, use_bar=not cmdline.no_bar)
 
     #process_video('/home/lane/Downloads/test-1605564339.flv')
 
