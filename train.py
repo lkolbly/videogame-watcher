@@ -15,8 +15,6 @@ img_height = 180
 img_width = 180
 
 def mkmodel(data_dir, save_path):
-    #data_dir = "dataset/"
-
     # Load the dataset
     train_ds = tf.keras.preprocessing.image_dataset_from_directory(
         data_dir,
@@ -99,24 +97,10 @@ def mkmodel(data_dir, save_path):
     plt.title('Training and Validation Loss')
     plt.show()"""
 
-    """def runmodel(arr):
-        predictions = model.predict(tf.expand_dims(arr, 0))
-        score = tf.nn.softmax(predictions[0])
-        #print("Frame: {} FPS: {:.02} Class: {} Confidence: {}%".format(frameno, 1.0 / max(0.000001, time.time() - start), class_names[np.argmax(score)], 100 * np.max(score)))
-        return (class_names[np.argmax(score)], 100 * np.max(score))"""
-
     model.save(save_path)
 
     with open(f"{save_path}.json", "w") as f:
         f.write(json.dumps(class_names))
-
-    #return runmodel
-    #return (class_names, model)
-
-#ident_model = mkmodel("datasets/game_ident", "models/ident.h5")
-#warzone_model = mkmodel("datasets/warzone", "models/warzone.h5")
-#warships_model = mkmodel("datasets/warships", "models/warships.h5")
-#overwatch_model = mkmodel("datasets/overwatch", "models/overwatch.h5")
 
 def main():
     if len(sys.argv) != 3:
@@ -134,33 +118,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-#ident_model.save("models/ident.h5")
-#warzone_model.save("models/warzone.h5")
-
-# Now process a video file
-"""import numpy as np
-import cv2
-
-cap = cv2.VideoCapture('test-1605829412.flv')
-
-frameno = 0
-while cap.isOpened():
-    frameno += 1
-    start = time.time()
-    ret, frame = cap.read()
-    if frameno % (60*10) != 0:
-        # Only pull every 10s
-        continue
-    im = PIL.Image.fromarray(frame)
-    im = im.resize((180, 180))
-    arr = np.array(im)
-    (pred_game, _) = ident_model(arr)
-    (pred, score) = warzone_model(arr)
-    print("Frame: {} FPS: {:.02} Game: {} Class: {} Confidence: {}%".format(frameno, 1.0 / max(0.000001, time.time() - start), pred_game, pred, score))
-    #predictions = warzone_model.predict(tf.expand_dims(arr, 0))
-    #score = tf.nn.softmax(predictions[0])
-    #print("Frame: {} FPS: {:.02} Class: {} Confidence: {}%".format(frameno, 1.0 / max(0.000001, time.time() - start), class_names[np.argmax(score)], 100 * np.max(score)))
-    pass
-
-cap.release()"""
