@@ -92,7 +92,7 @@ class MenuGameTagger:
             with open(f"{self.moviepy}/{fname_base}.py", "w") as f:
                 f.write(f"# {self.name} matches")
                 f.write("from moviepy.editor import *\n\n")
-                f.write("fullclip = VideoFileClip(\"{fname_base\"}.mp4)\n")
+                f.write(f"fullclip = VideoFileClip(\"{fname_base}\".mp4)\n")
 
                 match_count = 0
                 for idx in range(len(self.segments) - 1):
@@ -178,6 +178,8 @@ def process_video(video, args, use_bar=False):
 
         for tagger in taggers.values():
             tagger.process(frameno, im)
+    if use_bar:
+        bar.close()
 
     cap.release()
 
@@ -235,6 +237,8 @@ def find_unident_frames(ident_model, video, classification, args, use_bar=False)
 
         if (pred_score < 80 or pred_game != classification) and pred_game != "blank":
             im_swapped.save(f"{args.known_game_path}/{classification}/{h}.png")
+    if use_bar:
+        bar.close()
 
     cap.release()
 
