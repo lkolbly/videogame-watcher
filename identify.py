@@ -30,6 +30,8 @@ class Args:
         self.retrain_path = None
         self.known_game_path = None
         self.skip_frames = None
+        self.moviepy = None
+        self.identified_path = None
 
 class MenuGameTagger:
     def __init__(self, name, video, args):
@@ -40,6 +42,10 @@ class MenuGameTagger:
         self.segments = []
         self.name = name
         self.retrain = {}
+        self.moviepy = args.moviepy
+
+        if self.retrain_path is not None:
+            os.makedirs(self.retrain_path, exist_ok=True)
 
     def process(self, frameno, im):
         """
@@ -74,7 +80,38 @@ class MenuGameTagger:
 
     def finish(self):
         for h,fname in self.retrain.items():
-            shutil.move(fname, f"retrain/{h}.png")
+            shutil.move(fname, f"{self.retrain_path}/{h}.png")
+
+        if self.moviepy is not None:
+            fname_base = self.video.split("/")[-1].split(".")[0]
+
+            os.makedirs(self.moviepy, exist_ok=True)
+            fullclip = VideoFileClip(self.video)
+            fullclip.resize((1920/2, 1080/2)).write_videofile(f"{self.moviepy}/{fname_base}.mp4", codec="mpeg4", audio_bitrate="48k", bitrate="3000k")
+
+            with open(f"{self.moviepy}/{fname_base}.py", "w") as f:
+                f.write(f"# {self.name} matches")
+                f.write("from moviepy.editor import *\n\n")
+                f.write("fullclip = VideoFileClip(\"{fname_base\"}.mp4)\n")
+
+                match_count = 0
+                for idx in range(len(self.segments) - 1):
+                    if self.segments[idx][1] != "game":
+                        continue
+                    start = self.segments[idx][0]
+                    end = self.segments[idx+1][0]
+                    if end - start < 30*60: # A match has to be at least 30 seconds to count
+                        continue
+                    print("{} game match starting at {} lasting for {}".format(self.name, frames_to_ts(start), frames_to_ts(end - start)))
+                    #subclip = fullclip.subclip(frames_to_ts(start), frames_to_ts(end)).resize((1920/2, 1080/2))
+                    #subclip.write_videofile(f"{self.moviepy}/{fname_base}-{match_count}.mp4", codec="mpeg4", audio_bitrate="48k", bitrate="3000k")
+                    f.write(f"match{match_count} = fullclip.subclip(\"{frames_to_ts(start)}\", \"{frames_to_ts(end)}\")\n")
+                    match_count += 1
+
+                f.write("\n")
+                for i in range(match_count):
+                    f.write(f"match{i}.write_videofile(\"match{i}.mp4\", codec=\"mpeg4\", audio_bitrate=\"48k\")\n")
+            pass
 
         return
 
@@ -106,15 +143,18 @@ def process_video(video, args, use_bar=False):
 
     cap = cv2.VideoCapture(video)
 
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
     frameno = 0
     taggers = {}
     for game in ["warzone", "overwatch", "warships"]:
         taggers[game] = MenuGameTagger(game, video, args)
     games = collections.Counter()
-    print("Processing {}...".format(video))
+    print(f"Processing {fps}fps {frame_count}-frame file {video}...")
     force_retrain = {}
     if use_bar:
-        bar = tqdm()
+        bar = tqdm(total=frame_count)
     while cap.isOpened():
         frameno += 1
         start = time.time()
@@ -158,12 +198,19 @@ def process_video(video, args, use_bar=False):
     if args.known_game_path is not None:
         find_unident_frames(ident_model, video, game, args, use_bar)
 
+    fname = video.split("/")[-1]
+    if args.identified_path is not None:
+        shutil.move(video, f"{args.identified_path}/{fname}")
+
 def find_unident_frames(ident_model, video, classification, args, use_bar=False):
     cap = cv2.VideoCapture(video)
 
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
     frameno = 0
     if use_bar:
-        bar = tqdm()
+        bar = tqdm(total=frame_count)
     while cap.isOpened():
         frameno += 1
         start = time.time()
@@ -220,12 +267,14 @@ if __name__ == "__main__":
 
     # Arguments for finding files
     parser.add_argument("--file", help="Path to a single video file to process")
+    parser.add_argument("--input-path", help="Path to a folder containing video files to process")
 
     # Arguments for defining how to process found files
     parser.add_argument("--skip-frames", default="600", help="Only process every Nth frame")
     parser.add_argument("--identified-directory", help="If a file is identified, move it to the named directory")
     parser.add_argument("--retrain-directory", help="If specified, add uncertain frames to this directory")
     parser.add_argument("--known-game-directory", help="If specified, videos are re-processed using the known game identity to find frames which the ident model mis-classified")
+    parser.add_argument("--moviepy-out", help="Target directory to save moviepy scripts and low-res working sets")
 
     cmdline = parser.parse_args()
 
@@ -234,8 +283,18 @@ if __name__ == "__main__":
     args.retrain_path = cmdline.retrain_directory
     args.known_game_path = cmdline.known_game_directory
     args.skip_frames = int(cmdline.skip_frames)
+    args.moviepy = cmdline.moviepy_out
+    args.identified_path = cmdline.identified_directory
 
-    process_video(cmdline.file, args, use_bar=not cmdline.no_bar)
+    if cmdline.file is not None and cmdline.input_path is not None:
+        raise RuntimeError("Cannot specify both --file and --input-path")
+
+    if cmdline.file is not None:
+        process_video(cmdline.file, args, use_bar=not cmdline.no_bar)
+    else:
+        for fname in os.listdir(cmdline.input_path):
+            fname = f"{cmdline.input_path}/{fname}"
+            process_video(fname, args, use_bar=not cmdline.no_bar)
 
     """os.makedirs("retrain")
     os.makedirs("ident-out")
