@@ -200,7 +200,8 @@ def process_video(video, args, use_bar=False):
 
     fname = video.split("/")[-1]
     if args.identified_path is not None:
-        shutil.move(video, f"{args.identified_path}/{fname}")
+        os.makedirs(f"{args.identified_path}/{game}", exist_ok=True)
+        shutil.move(video, f"{args.identified_path}/{game}/{fname}")
 
 def find_unident_frames(ident_model, video, classification, args, use_bar=False):
     cap = cv2.VideoCapture(video)
