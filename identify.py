@@ -185,7 +185,7 @@ def process_video(video, args, use_bar=False):
 
     print("Game counts for {}: {}".format(video, games))
     if len(games.most_common()) == 0:
-        for tagger in taggers:
+        for tagger in taggers.values():
             tagger.discard()
         return
 
