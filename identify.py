@@ -11,6 +11,8 @@ from multiprocessing import Pool
 from moviepy.editor import *
 import shutil
 import tempfile
+import re
+import datetime
 
 def load_model(path):
     class_names = json.loads(open(f"{path}.json").read())
@@ -32,6 +34,7 @@ class Args:
         self.skip_frames = None
         self.moviepy = None
         self.identified_path = None
+        self.youtube_key = None
 
 class MenuGameTagger:
     def __init__(self, name, video, args):
@@ -43,6 +46,7 @@ class MenuGameTagger:
         self.name = name
         self.retrain = {}
         self.moviepy = args.moviepy
+        self.matches = []
 
         if self.retrain_path is not None:
             os.makedirs(self.retrain_path, exist_ok=True)
@@ -82,6 +86,17 @@ class MenuGameTagger:
         for h,fname in self.retrain.items():
             shutil.move(fname, f"{self.retrain_path}/{h}.png")
 
+        match_count = 0
+        for idx in range(len(self.segments) - 1):
+            if self.segments[idx][1] != "game":
+                continue
+            start = self.segments[idx][0]
+            end = self.segments[idx+1][0]
+            if end - start < 30*60: # A match has to be at least 30 seconds to count
+                continue
+            self.matches.append((start, end))
+            match_count += 1
+
         if self.moviepy is not None:
             fname_base = self.video.split("/")[-1].split(".")[0]
 
@@ -94,46 +109,14 @@ class MenuGameTagger:
                 f.write("from moviepy.editor import *\n\n")
                 f.write(f"fullclip = VideoFileClip(\"{fname_base}\".mp4)\n")
 
-                match_count = 0
-                for idx in range(len(self.segments) - 1):
-                    if self.segments[idx][1] != "game":
-                        continue
-                    start = self.segments[idx][0]
-                    end = self.segments[idx+1][0]
-                    if end - start < 30*60: # A match has to be at least 30 seconds to count
-                        continue
-                    print("{} game match starting at {} lasting for {}".format(self.name, frames_to_ts(start), frames_to_ts(end - start)))
-                    #subclip = fullclip.subclip(frames_to_ts(start), frames_to_ts(end)).resize((1920/2, 1080/2))
-                    #subclip.write_videofile(f"{self.moviepy}/{fname_base}-{match_count}.mp4", codec="mpeg4", audio_bitrate="48k", bitrate="3000k")
+                for match_count, (start, end) in enumerate(self.matches):
                     f.write(f"match{match_count} = fullclip.subclip(\"{frames_to_ts(start)}\", \"{frames_to_ts(end)}\")\n")
-                    match_count += 1
+                    pass
 
                 f.write("\n")
                 for i in range(match_count):
                     f.write(f"match{i}.write_videofile(\"match{i}.mp4\", codec=\"mpeg4\", audio_bitrate=\"48k\")\n")
             pass
-
-        return
-
-        fname_base = video.split("/")[-1].split(".")[0]
-        with open(f"{self.name}-out/{fname_base}.json", "w") as f:
-            f.write(json.dumps(self.segments))
-        return
-
-        fullclip = VideoFileClip(video)
-
-        match_count = 0
-        for idx in range(len(self.segments) - 1):
-            if self.segments[idx][1] != "game":
-                continue
-            start = self.segments[idx][0]
-            end = self.segments[idx+1][0]
-            print("{} game starting at {} lasting for {}".format(self.name, frames_to_ts(start), frames_to_ts(end - start)))
-            subclip = fullclip.subclip(frames_to_ts(start), frames_to_ts(end))
-            subclip.write_videofile(f"{self.name}-out/{fname_base}-{match_count}.mp4", codec="mpeg4", audio_bitrate="48k", bitrate="12000k")
-            match_count += 1
-            pass
-        pass
 
 def process_video(video, args, use_bar=False):
     if not video.endswith(".flv"):
@@ -189,16 +172,41 @@ def process_video(video, args, use_bar=False):
             tagger.discard()
         return
 
-    game = games.most_common(1)[0][0]
+    if args.assume_game is not None:
+        game = args.assume_game
+    else:
+        game = games.most_common(1)[0][0]
 
+    tagger = None
     for gname in taggers.keys():
         if gname != game:
             taggers[gname].discard()
         else:
             taggers[gname].finish()
+            tagger = taggers[gname]
 
     if args.known_game_path is not None:
         find_unident_frames(ident_model, video, game, args, use_bar)
+
+    if args.youtube_key is not None and tagger is not None:
+        print("Generating YouTube description")
+        #print("Matches: ", tagger.matches)
+
+        description = "{} match {}\n\n".format(game, video.split("/")[-1])
+        description += "0:00 Start\n"
+        for i,match in enumerate(tagger.matches):
+            description += "{} Match {}\n".format(frames_to_ts_minsec(match[0]), i)
+        description += "\nAutomatically uploaded by Game Replay Uploader"
+
+        m = re.search(r"test-(\d+)\.", video)
+        game_pretty_name = game.capitalize()
+        if m is not None:
+            dt = datetime.datetime.fromtimestamp(int(m.group(1)))
+            title = "{} game {}".format(game_pretty_name, dt.strftime("%c"))
+        else:
+            title = "{} Game Unknown Date: {}".format(game_pretty_name, video)
+        print(title)
+        print(description)
 
     fname = video.split("/")[-1]
     if args.identified_path is not None:
@@ -252,6 +260,19 @@ def frames_to_ts(nframes, fps=60):
     milliseconds = int(nframes / fps * 1000)
     return f"{hours:02}:{minutes:02}:{seconds:02}.{milliseconds:03}"
 
+def frames_to_ts_minsec(nframes, fps=60):
+    hours = nframes // (fps * 3600)
+    nframes -= hours * (fps * 3600)
+    minutes = nframes // (fps * 60)
+    nframes -= minutes * (fps * 60)
+    seconds = nframes // fps
+    nframes -= seconds * fps
+    milliseconds = int(nframes / fps * 1000)
+    if hours > 0:
+        return f"{hours:02}:{minutes:02}:{seconds:02}"
+    else:
+        return f"{minutes:02}:{seconds:02}"
+
 if __name__ == "__main__":
     """
     Things the user can do to files:
@@ -261,11 +282,13 @@ if __name__ == "__main__":
     - Generate moviepy script to access matches from source (and output low-bitrate copy for editing)
     - Find uncertain frames for each model
     - Find incorrectly classified frames for videos of known content
+    - Upload match-ified videos to YouTube
     """
 
-    import argparse
+    #import argparse
 
-    parser = argparse.ArgumentParser()
+    #parser = argparse.ArgumentParser()
+    parser = argparser
     parser.add_argument("--models", help="Path to the models directory", required=True)
 
     parser.add_argument("--no-bar", help="Disable printing the progress bar", action='store_true')
@@ -280,6 +303,8 @@ if __name__ == "__main__":
     parser.add_argument("--retrain-directory", help="If specified, add uncertain frames to this directory")
     parser.add_argument("--known-game-directory", help="If specified, videos are re-processed using the known game identity to find frames which the ident model mis-classified")
     parser.add_argument("--moviepy-out", help="Target directory to save moviepy scripts and low-res working sets")
+    parser.add_argument("--youtube-key", help="API key for uploading to YouTube")
+    parser.add_argument("--assume-game", help="If set, override the detected game with the provided value")
 
     cmdline = parser.parse_args()
 
@@ -290,6 +315,8 @@ if __name__ == "__main__":
     args.skip_frames = int(cmdline.skip_frames)
     args.moviepy = cmdline.moviepy_out
     args.identified_path = cmdline.identified_directory
+    args.youtube_key = cmdline.youtube_key
+    args.assume_game = cmdline.assume_game
 
     if cmdline.file is not None and cmdline.input_path is not None:
         raise RuntimeError("Cannot specify both --file and --input-path")
@@ -297,7 +324,7 @@ if __name__ == "__main__":
     if cmdline.file is not None:
         process_video(cmdline.file, args, use_bar=not cmdline.no_bar)
     else:
-        for fname in os.listdir(cmdline.input_path):
+        for fname in sorted(os.listdir(cmdline.input_path)):
             fname = f"{cmdline.input_path}/{fname}"
             process_video(fname, args, use_bar=not cmdline.no_bar)
 
